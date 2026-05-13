@@ -1,20 +1,20 @@
 import os, json, requests, pandas as pd
 from datetime import datetime
 
-# 🔧 НАСТРОЙКИ (ГОТОВО К ЗАПУСКУ)
+# 🔧 НАСТРОЙКИ
 CONFIG = {
-    "NTFY_TOPIC": "my-bonds-alert-x7k9",   # ← Ваш топик
-    "TARGET_DV01": 1000,                   # Риск на 1 б.п. (руб.)
-    "SPREAD_THRESHOLD": 0.0,               # 🟢 Порог для ВХОДА (0.5% = 50 б.п.)
-    "FIX_THRESHOLD": 0.15,                 # 🔴 Порог для ФИКСАЦИИ (0.15% = 15 б.п.)
-    "COOLDOWN_MIN": 20,                    # Не дублировать один тип сигнала чаще N минут
+    "NTFY_TOPIC": "my-bonds-alert-x7k9",
+    "TARGET_DV01": 1000,
+    "SPREAD_THRESHOLD": 0.0,   # <- ПОСТАВЬТЕ 0.0 ЧТОБЫ ПРОВЕРИТЬ ПУШ ПРЯМО СЕЙЧАС
+    "FIX_THRESHOLD": 0.15,
+    "COOLDOWN_MIN": 20,
     "PAIRS": [
-        ("SU26233RMFS5", "SU26246RMFS7"),  # 26233–26246
-        ("SU26240RMFS0", "SU26245RMFS9"),  # 26240–26245
-        ("SU26245RMFS9", "SU26246RMFS7"),  # 26245–26246
-        ("SU26248RMFS3", "SU26250RMFS9"),  # 26248–26250
-        ("SU26250RMFS9", "SU26252RMFS5"),  # 26250–26252
-        ("SU26238RMFS4", "SU26247RMFS5")   # 26238–26247
+        ("SU26233RMFS5", "SU26246RMFS7"),
+        ("SU26240RMFS0", "SU26245RMFS9"),
+        ("SU26245RMFS9", "SU26246RMFS7"),
+        ("SU26248RMFS3", "SU26250RMFS9"),
+        ("SU26250RMFS9", "SU26252RMFS5"),
+        ("SU26238RMFS4", "SU26247RMFS5")
     ],
     "HISTORY_FILE": os.path.join(os.path.expanduser("~"), "bond_history.json")
 }
@@ -36,7 +36,7 @@ def get_bond(secid):
             "price": float(row[idx.get("WAPRICE",0)] or row[idx.get("LAST",0)] or 0)
         }
     except Exception as e:
-        print(f"⚠️ Ошибка {secid}: {e}")
+        print(f"Error {secid}: {e}")
         return None
 
 def calc_dv01(dur, price):
@@ -52,70 +52,69 @@ def save_hist(data):
 
 def send_ntfy(title, msg, pr=4):
     try:
-        h = {"Title": title, "Priority": str(pr), "Tags": "warning", "Content-Type": "text/plain"}
+        # Используем plain text и заголовки, чтобы избежать проблем с кодировкой
+        h = {"Title": title, "Priority": str(pr), "Tags": "warning", "Content-Type": "text/plain; charset=utf-8"}
         requests.post(f"https://ntfy.sh/{CONFIG['NTFY_TOPIC']}", data=msg.encode("utf-8"), headers=h, timeout=10)
-        print("✅ Push отправлен")
-    except Exception as e: print(f"❌ ntfy: {e}")
+        print("Push sent OK")
+    except Exception as e: print(f"ntfy Error: {e}")
 
 def main():
-    print(f"⏰ Проверка: {datetime.now().strftime('%H:%M')}")
+    print(f"Check time: {datetime.now().strftime('%H:%M')}")
     hist = load_hist()
     now = datetime.now()
 
     for id1, id2 in CONFIG["PAIRS"]:
         pk = f"{id1}_{id2}"
         d1, d2 = get_bond(id1), get_bond(id2)
-        if not d1 or not d2: print(f"⏭ {pk}: нет данных"); continue
+        if not d1 or not d2: print(f"Skip {pk}: no data"); continue
             
         dv1 = calc_dv01(d1["duration"], d1["price"])
         dv2 = calc_dv01(d2["duration"], d2["price"])
-        if dv1 <= 0 or dv2 <= 0: print(f"⏭ {pk}: ошибка DV01"); continue
+        if dv1 <= 0 or dv2 <= 0: print(f"Skip {pk}: DV01 error"); continue
             
-        spread = d1["yield"] - d2["yield"]  # Разница в %
+        spread = d1["yield"] - d2["yield"]
         abs_spread = abs(spread)
-        clean = f"{id1[2:7]}–{id2[2:7]}"
+        clean = f"{id1[2:7]}-{id2[2:7]}"
 
-        # 🟢 ЛОГИКА ВХОДА (Спред > 0.5%)
+        # ВХОД
         if abs_spread > CONFIG["SPREAD_THRESHOLD"]:
             last = hist.get(f"last_open_{pk}")
             if not last or (now - datetime.fromisoformat(last)).total_seconds() >= CONFIG["COOLDOWN_MIN"]*60:
-                action = "Шорт 1 / Лонг 2" if spread > 0 else "Лонг 1 / Шорт 2"
+                action = "Short 1 / Long 2" if spread > 0 else "Long 1 / Short 2"
                 long_id, short_id = (id2, id1) if spread > 0 else (id1, id2)
                 dv_long, dv_short = (dv2, dv1) if spread > 0 else (dv1, dv2)
                 
                 q_long = round(CONFIG["TARGET_DV01"] / dv_long)
                 q_short = round(CONFIG["TARGET_DV01"] / dv_short)
                 
-                msg = (f"🟢 СИГНАЛ НА ВХОД | {clean}\n"
-                       f"📊 Спред: {spread*100:.1f} б.п. (порог {CONFIG['SPREAD_THRESHOLD']*100} б.п.)\n"
-                       f"🎯 Действие: {action}\n\n"
-                       f"📏 DV01-нейтрально ({CONFIG['TARGET_DV01']}₽):\n"
-                       f"• Лонг {long_id[2:7]}: {q_long} шт.\n"
-                       f"• Шорт {short_id[2:7]}: {q_short} шт.\n\n"
+                msg = (f"ENTRY SIGNAL | {clean}\n"
+                       f"Spread: {spread*100:.1f} bp (Threshold: {CONFIG['SPREAD_THRESHOLD']*100} bp)\n"
+                       f"Action: {action}\n\n"
+                       f"DV01-Neutral ({CONFIG['TARGET_DV01']} RUB):\n"
+                       f"Long {long_id[2:7]}: {q_long} pcs\n"
+                       f"Short {short_id[2:7]}: {q_short} pcs\n\n"
                        f"Yield: {d1['yield']:.2f}% vs {d2['yield']:.2f}%")
                 
-                send_ntfy("📊 ВХОД", msg, pr=4)
+                send_ntfy("ENTRY ALERT", msg, pr=4)
                 hist[f"last_open_{pk}"] = now.isoformat()
-                print(f"✅ {clean}: Вход отправлен")
-                continue  # Если сработал вход, фиксацию в этом же цикле не проверяем
+                print(f"OK {clean}: Entry sent")
+                continue
 
-        # 🔴 ЛОГИКА ФИКСАЦИИ (Спред вернулся к ≤ 0.15%)
+        # ФИКСАЦИЯ
         elif abs_spread <= CONFIG["FIX_THRESHOLD"]:
             last = hist.get(f"last_fix_{pk}")
             if not last or (now - datetime.fromisoformat(last)).total_seconds() >= CONFIG["COOLDOWN_MIN"]*60:
-                msg = (f"🔴 СИГНАЛ НА ФИКСАЦИЮ | {clean}\n"
-                       f"📊 Спред: {spread*100:.1f} б.п. (вернулся к ≤ {CONFIG['FIX_THRESHOLD']*100} б.п.)\n"
-                       f"🎯 Действие: Закрыть обе позиции\n\n"
-                       f"📏 Было открыто DV01-нейтрально ({CONFIG['TARGET_DV01']}₽)\n"
-                       f"Yield: {d1['yield']:.2f}% vs {d2['yield']:.2f}%\n"
-                       f"💰 Проверьте P&L и закройте в терминале")
+                msg = (f"FIX SIGNAL | {clean}\n"
+                       f"Spread: {spread*100:.1f} bp (Returned to <= {CONFIG['FIX_THRESHOLD']*100} bp)\n"
+                       f"Action: Close positions\n\n"
+                       f"Yield: {d1['yield']:.2f}% vs {d2['yield']:.2f}%")
                 
-                send_ntfy("📊 ФИКСАЦИЯ", msg, pr=3)
+                send_ntfy("FIX ALERT", msg, pr=3)
                 hist[f"last_fix_{pk}"] = now.isoformat()
-                print(f"✅ {clean}: Фиксация отправлена")
+                print(f"OK {clean}: Fix sent")
                 continue
 
-        print(f"🔇 {clean}: Спред={spread*100:.1f} б.п. → вне зон")
+        print(f"Silent {clean}: Spread={spread*100:.1f} bp")
 
     save_hist(hist)
 
