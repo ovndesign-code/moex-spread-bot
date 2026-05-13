@@ -4,8 +4,8 @@ from datetime import datetime
 # 🔧 НАСТРОЙКИ
 CONFIG = {
     "NTFY_TOPIC": "my-bonds-alert-x7k9",
-    "TARGET_DV01": 1000,
-    "SPREAD_THRESHOLD": 0.5,   # <- ПОСТАВЬТЕ 0.0 ЧТОБЫ ПРОВЕРИТЬ ПУШ ПРЯМО СЕЙЧАС
+    "TARGET_DV01": 10000,
+    "SPREAD_THRESHOLD": 0.0,   # <- ПОСТАВЬТЕ 0.0 ЧТОБЫ ПРОВЕРИТЬ ПУШ ПРЯМО СЕЙЧАС
     "FIX_THRESHOLD": 0.15,
     "COOLDOWN_MIN": 20,
     "PAIRS": [
