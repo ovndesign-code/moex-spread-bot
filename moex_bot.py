@@ -5,7 +5,7 @@ from datetime import datetime
 CONFIG = {
     "NTFY_TOPIC": "my-bonds-alert-x7k9",   # ← Ваш топик
     "TARGET_DV01": 1000,                   # Риск на 1 б.п. (руб.)
-    "SPREAD_THRESHOLD": 0.5,               # 🟢 Порог для ВХОДА (0.5% = 50 б.п.)
+    "SPREAD_THRESHOLD": 0.0,               # 🟢 Порог для ВХОДА (0.5% = 50 б.п.)
     "FIX_THRESHOLD": 0.15,                 # 🔴 Порог для ФИКСАЦИИ (0.15% = 15 б.п.)
     "COOLDOWN_MIN": 20,                    # Не дублировать один тип сигнала чаще N минут
     "PAIRS": [
