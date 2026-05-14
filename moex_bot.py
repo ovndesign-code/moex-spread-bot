@@ -1,7 +1,6 @@
 import os, json, requests, pandas as pd
 from datetime import datetime, timedelta
 
-# 🔧 НАСТРОЙКИ
 CONFIG = {
     "NTFY_TOPIC": "my-bonds-alert-x7k9",
     "TARGET_DV01": 100000,
@@ -59,11 +58,9 @@ def send_ntfy(title, msg, pr=4):
     except Exception as e: print(f"ntfy Error: {e}")
 
 def check_commands():
-    """Проверяет, есть ли команды от пользователя в топике"""
     try:
         r = requests.get(f"https://ntfy.sh/{CONFIG['NTFY_TOPIC']}/json?limit=5", timeout=5)
         if r.status_code != 200: return False
-        
         messages = r.json()
         for msg in messages:
             text = msg.get("message", "").strip().lower()
@@ -75,20 +72,18 @@ def check_commands():
         return False
 
 def send_summary():
-    """Отправляет сводку по всем парам"""
     print("Generating summary...")
     lines = [f"STATUS REPORT | {datetime.now().strftime('%H:%M')}\n"]
     
     for id1, id2 in CONFIG["PAIRS"]:
         d1, d2 = get_bond(id1), get_bond(id2)
         if not d1 or not d2:
-            lines.append(f"ERROR | {id1[2:7]}-{id2[2:7]}: no data")
+            lines.append(f"ERROR | {id1[2:7]}-{id2[2:7]}: no data (market closed?)")
             continue
         
         spread = d1["yield"] - d2["yield"]
         abs_spread = abs(spread)
         
-        # Определяем статус
         if abs_spread > CONFIG["SPREAD_THRESHOLD"]:
             status = "ENTRY"
         elif abs_spread <= CONFIG["FIX_THRESHOLD"]:
@@ -103,31 +98,52 @@ def send_summary():
     
     send_ntfy("PORTFOLIO STATUS", summary, pr=3)
 
+def is_market_open():
+    """Проверяет, открыт ли рынок MOEX (10:00-18:45 МСК, пн-пт)"""
+    now_msk = datetime.utcnow() + timedelta(hours=3)  # UTC+3 = Москва
+    hour = now_msk.hour
+    weekday = now_msk.weekday()
+    
+    if weekday >= 5:  # Суббота=5, Воскресенье=6
+        return False
+    if 10 <= hour < 19:  # 10:00-18:59
+        return True
+    return False
+
 def main():
     print(f"Check time: {datetime.now().strftime('%H:%M')}")
     hist = load_hist()
     now = datetime.now()
 
-    # ПРОВЕРКА КОМАНД
+    # Проверка команд (работает всегда)
     if check_commands():
         print("Command detected, sending summary...")
         send_summary()
 
-    # ПРОВЕРКА СПРЕДОВ
+    # Проверка рынка
+    if not is_market_open():
+        print("Market closed. Skipping spread checks.")
+        save_hist(hist)
+        return
+
+    # Проверка спредов (только в рабочее время)
     for id1, id2 in CONFIG["PAIRS"]:
         pk = f"{id1}_{id2}"
         d1, d2 = get_bond(id1), get_bond(id2)
-        if not d1 or not d2: print(f"Skip {pk}: no data"); continue
+        if not d1 or not d2: 
+            print(f"Skip {pk}: no data"); 
+            continue
             
         dv1 = calc_dv01(d1["duration"], d1["price"])
         dv2 = calc_dv01(d2["duration"], d2["price"])
-        if dv1 <= 0 or dv2 <= 0: print(f"Skip {pk}: DV01 error"); continue
+        if dv1 <= 0 or dv2 <= 0: 
+            print(f"Skip {pk}: DV01 error (dur={d1['duration']:.2f}/{d2['duration']:.2f}, price={d1['price']:.2f}/{d2['price']:.2f})"); 
+            continue
             
         spread = d1["yield"] - d2["yield"]
         abs_spread = abs(spread)
         clean = f"{id1[2:7]}-{id2[2:7]}"
 
-        # ВХОД
         if abs_spread > CONFIG["SPREAD_THRESHOLD"]:
             last = hist.get(f"last_open_{pk}")
             if not last or (now - datetime.fromisoformat(last)).total_seconds() >= CONFIG["COOLDOWN_MIN"]*60:
@@ -151,7 +167,6 @@ def main():
                 print(f"OK {clean}: Entry sent")
                 continue
 
-        # ФИКСАЦИЯ
         elif abs_spread <= CONFIG["FIX_THRESHOLD"]:
             last = hist.get(f"last_fix_{pk}")
             if not last or (now - datetime.fromisoformat(last)).total_seconds() >= CONFIG["COOLDOWN_MIN"]*60:
