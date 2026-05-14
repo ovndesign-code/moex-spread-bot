@@ -1,11 +1,11 @@
 import os, json, requests, pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # 🔧 НАСТРОЙКИ
 CONFIG = {
     "NTFY_TOPIC": "my-bonds-alert-x7k9",
-    "TARGET_DV01": 10000,
-    "SPREAD_THRESHOLD": 0.5,   # <- ПОСТАВЬТЕ 0.0 ЧТОБЫ ПРОВЕРИТЬ ПУШ ПРЯМО СЕЙЧАС
+    "TARGET_DV01": 100000,
+    "SPREAD_THRESHOLD": 0.5,
     "FIX_THRESHOLD": 0.15,
     "COOLDOWN_MIN": 20,
     "PAIRS": [
@@ -18,6 +18,8 @@ CONFIG = {
     ],
     "HISTORY_FILE": os.path.join(os.path.expanduser("~"), "bond_history.json")
 }
+
+COMMANDS = ["status", "summary", "статус", "сводка", "?", "help"]
 
 def get_bond(secid):
     url = f"https://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQOB/securities/{secid}.json"
@@ -36,7 +38,6 @@ def get_bond(secid):
             "price": float(row[idx.get("WAPRICE",0)] or row[idx.get("LAST",0)] or 0)
         }
     except Exception as e:
-        print(f"Error {secid}: {e}")
         return None
 
 def calc_dv01(dur, price):
@@ -52,17 +53,67 @@ def save_hist(data):
 
 def send_ntfy(title, msg, pr=4):
     try:
-        # Используем plain text и заголовки, чтобы избежать проблем с кодировкой
         h = {"Title": title, "Priority": str(pr), "Tags": "warning", "Content-Type": "text/plain; charset=utf-8"}
         requests.post(f"https://ntfy.sh/{CONFIG['NTFY_TOPIC']}", data=msg.encode("utf-8"), headers=h, timeout=10)
-        print("Push sent OK")
+        print(f"Sent: {title}")
     except Exception as e: print(f"ntfy Error: {e}")
+
+def check_commands():
+    """Проверяет, есть ли команды от пользователя в топике"""
+    try:
+        r = requests.get(f"https://ntfy.sh/{CONFIG['NTFY_TOPIC']}/json?limit=5", timeout=5)
+        if r.status_code != 200: return False
+        
+        messages = r.json()
+        for msg in messages:
+            text = msg.get("message", "").strip().lower()
+            if text in COMMANDS:
+                print(f"Command detected: {text}")
+                return True
+        return False
+    except:
+        return False
+
+def send_summary():
+    """Отправляет сводку по всем парам"""
+    print("Generating summary...")
+    lines = [f"STATUS REPORT | {datetime.now().strftime('%H:%M')}\n"]
+    
+    for id1, id2 in CONFIG["PAIRS"]:
+        d1, d2 = get_bond(id1), get_bond(id2)
+        if not d1 or not d2:
+            lines.append(f"ERROR | {id1[2:7]}-{id2[2:7]}: no data")
+            continue
+        
+        spread = d1["yield"] - d2["yield"]
+        abs_spread = abs(spread)
+        
+        # Определяем статус
+        if abs_spread > CONFIG["SPREAD_THRESHOLD"]:
+            status = "ENTRY"
+        elif abs_spread <= CONFIG["FIX_THRESHOLD"]:
+            status = "FIX"
+        else:
+            status = "WAIT"
+        
+        lines.append(f"{status} | {id1[2:7]}-{id2[2:7]}: {spread*100:+.1f} bp ({d1['yield']:.2f}% vs {d2['yield']:.2f}%)")
+    
+    summary = "\n".join(lines)
+    summary += f"\n\nThresholds: Entry >{CONFIG['SPREAD_THRESHOLD']*100:.0f} bp, Fix <={CONFIG['FIX_THRESHOLD']*100:.0f} bp"
+    
+    send_ntfy("PORTFOLIO STATUS", summary, pr=3)
 
 def main():
     print(f"Check time: {datetime.now().strftime('%H:%M')}")
     hist = load_hist()
     now = datetime.now()
 
+    # ПРОВЕРКА КОМАНД
+    if check_commands():
+        print("Command detected, sending summary...")
+        send_summary()
+
+    # ПРОВЕРКА СПРЕДОВ
     for id1, id2 in CONFIG["PAIRS"]:
         pk = f"{id1}_{id2}"
         d1, d2 = get_bond(id1), get_bond(id2)
