@@ -1,10 +1,12 @@
 import os, json, requests, pandas as pd
 from datetime import datetime, timedelta
 
+# 🔐 ЗАГРУЗКА СЕКРЕТОВ ИЗ GITHUB
+VK_TOKEN = os.environ.get('VK_GROUP_TOKEN')
+VK_GROUP_ID = os.environ.get('VK_GROUP_ID')
+VK_USER_ID = os.environ.get('VK_USER_ID')
+
 CONFIG = {
-    "VK_GROUP_TOKEN": "vk1.a.2GwW6mQmZUOO2BFrzfllsPouMQfiaZkKlE6ZEU5YTuuwSQzOc-P_LQdfIYeTEJBjKJv42_OXQrcGFWtPtBzmcxCNPL-KdXgttIJIunXsjBQuUpbE0BMUV990ItVzt6mTb5ucuwXtePmUcmv-966DLEO2bhrAHpT53_VL29BZpb5GMdrLz5ivYFteXVpfFNwq4gdvZx9rnF7UZWeMJ1GMag",
-    "VK_GROUP_ID": "238714875",
-    "VK_USER_ID": "861929447",
     "TARGET_DV01": 100000,
     "SPREAD_THRESHOLD": 0.5,
     "FIX_THRESHOLD": 0.15,
@@ -54,10 +56,10 @@ def send_vk(message):
     try:
         url = "https://api.vk.com/method/messages.send"
         params = {
-            "peer_id": CONFIG["VK_USER_ID"],
+            "peer_id": VK_USER_ID,
             "message": message,
             "random_id": int(datetime.now().timestamp() * 1000),
-            "access_token": CONFIG["VK_GROUP_TOKEN"],
+            "access_token": VK_TOKEN,
             "v": "5.131"
         }
         r = requests.post(url, params=params, timeout=10)
@@ -78,6 +80,11 @@ def is_market_open():
     return False
 
 def main():
+    # Проверяем, загрузились ли секреты
+    if not VK_TOKEN or not VK_USER_ID:
+        print("ERROR: Secrets not found! Check GitHub Settings -> Secrets.")
+        return
+
     print(f"Check time: {datetime.now().strftime('%H:%M')}")
     hist = load_hist()
     now = datetime.now()
