@@ -8,7 +8,7 @@ VK_USER_ID = os.environ.get('VK_USER_ID')
 
 CONFIG = {
     "TARGET_DV01": 100000,
-    "SPREAD_THRESHOLD": 0.5,
+    "SPREAD_THRESHOLD": 0.0,
     "FIX_THRESHOLD": 0.15,
     "COOLDOWN_MIN": 20,
     "PAIRS": [
