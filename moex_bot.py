@@ -2,7 +2,9 @@ import os, json, requests, pandas as pd
 from datetime import datetime, timedelta
 
 CONFIG = {
-    "NTFY_TOPIC": "my-bonds-alert-x7k9",
+    "VK_GROUP_TOKEN": "vk1.a.2GwW6mQmZUOO2BFrzfllsPouMQfiaZkKlE6ZEU5YTuuwSQzOc-P_LQdfIYeTEJBjKJv42_OXQrcGFWtPtBzmcxCNPL-KdXgttIJIunXsjBQuUpbE0BMUV990ItVzt6mTb5ucuwXtePmUcmv-966DLEO2bhrAHpT53_VL29BZpb5GMdrLz5ivYFteXVpfFNwq4gdvZx9rnF7UZWeMJ1GMag",
+    "VK_GROUP_ID": "238714875",
+    "VK_USER_ID": "861929447",
     "TARGET_DV01": 100000,
     "SPREAD_THRESHOLD": 0.5,
     "FIX_THRESHOLD": 0.15,
@@ -17,8 +19,6 @@ CONFIG = {
     ],
     "HISTORY_FILE": os.path.join(os.path.expanduser("~"), "bond_history.json")
 }
-
-COMMANDS = ["status", "summary", "статус", "сводка", "?", "help"]
 
 def get_bond(secid):
     url = f"https://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQOB/securities/{secid}.json"
@@ -36,7 +36,7 @@ def get_bond(secid):
             "duration": float(row[idx.get("DURATION",0)] or 0),
             "price": float(row[idx.get("WAPRICE",0)] or row[idx.get("LAST",0)] or 0)
         }
-    except Exception as e:
+    except:
         return None
 
 def calc_dv01(dur, price):
@@ -50,64 +50,31 @@ def load_hist():
 def save_hist(data):
     with open(CONFIG["HISTORY_FILE"], "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=2)
 
-def send_ntfy(title, msg, pr=4):
+def send_vk(message):
     try:
-        h = {"Title": title, "Priority": str(pr), "Tags": "warning", "Content-Type": "text/plain; charset=utf-8"}
-        requests.post(f"https://ntfy.sh/{CONFIG['NTFY_TOPIC']}", data=msg.encode("utf-8"), headers=h, timeout=10)
-        print(f"Sent: {title}")
-    except Exception as e: print(f"ntfy Error: {e}")
-
-def check_commands():
-    try:
-        r = requests.get(f"https://ntfy.sh/{CONFIG['NTFY_TOPIC']}/json?limit=5", timeout=5)
-        if r.status_code != 200: return False
-        messages = r.json()
-        for msg in messages:
-            text = msg.get("message", "").strip().lower()
-            if text in COMMANDS:
-                print(f"Command detected: {text}")
-                return True
-        return False
-    except:
-        return False
-
-def send_summary():
-    print("Generating summary...")
-    lines = [f"STATUS REPORT | {datetime.now().strftime('%H:%M')}\n"]
-    
-    for id1, id2 in CONFIG["PAIRS"]:
-        d1, d2 = get_bond(id1), get_bond(id2)
-        if not d1 or not d2:
-            lines.append(f"ERROR | {id1[2:7]}-{id2[2:7]}: no data (market closed?)")
-            continue
-        
-        spread = d1["yield"] - d2["yield"]
-        abs_spread = abs(spread)
-        
-        if abs_spread > CONFIG["SPREAD_THRESHOLD"]:
-            status = "ENTRY"
-        elif abs_spread <= CONFIG["FIX_THRESHOLD"]:
-            status = "FIX"
+        url = "https://api.vk.com/method/messages.send"
+        params = {
+            "peer_id": CONFIG["VK_USER_ID"],
+            "message": message,
+            "random_id": int(datetime.now().timestamp() * 1000),
+            "access_token": CONFIG["VK_GROUP_TOKEN"],
+            "v": "5.131"
+        }
+        r = requests.post(url, params=params, timeout=10)
+        result = r.json()
+        if "error" in result:
+            print(f"VK Error: {result['error']}")
         else:
-            status = "WAIT"
-        
-        lines.append(f"{status} | {id1[2:7]}-{id2[2:7]}: {spread*100:+.1f} bp ({d1['yield']:.2f}% vs {d2['yield']:.2f}%)")
-    
-    summary = "\n".join(lines)
-    summary += f"\n\nThresholds: Entry >{CONFIG['SPREAD_THRESHOLD']*100:.0f} bp, Fix <={CONFIG['FIX_THRESHOLD']*100:.0f} bp"
-    
-    send_ntfy("PORTFOLIO STATUS", summary, pr=3)
+            print("VK Sent OK")
+    except Exception as e:
+        print(f"VK Exception: {e}")
 
 def is_market_open():
-    """Проверяет, открыт ли рынок MOEX (10:00-18:45 МСК, пн-пт)"""
-    now_msk = datetime.utcnow() + timedelta(hours=3)  # UTC+3 = Москва
+    now_msk = datetime.utcnow() + timedelta(hours=3)
     hour = now_msk.hour
     weekday = now_msk.weekday()
-    
-    if weekday >= 5:  # Суббота=5, Воскресенье=6
-        return False
-    if 10 <= hour < 19:  # 10:00-18:59
-        return True
+    if weekday >= 5: return False
+    if 10 <= hour < 19: return True
     return False
 
 def main():
@@ -115,30 +82,19 @@ def main():
     hist = load_hist()
     now = datetime.now()
 
-    # Проверка команд (работает всегда)
-    if check_commands():
-        print("Command detected, sending summary...")
-        send_summary()
-
-    # Проверка рынка
     if not is_market_open():
-        print("Market closed. Skipping spread checks.")
+        print("Market closed. Skipping.")
         save_hist(hist)
         return
 
-    # Проверка спредов (только в рабочее время)
     for id1, id2 in CONFIG["PAIRS"]:
         pk = f"{id1}_{id2}"
         d1, d2 = get_bond(id1), get_bond(id2)
-        if not d1 or not d2: 
-            print(f"Skip {pk}: no data"); 
-            continue
+        if not d1 or not d2: print(f"Skip {pk}: no data"); continue
             
         dv1 = calc_dv01(d1["duration"], d1["price"])
         dv2 = calc_dv01(d2["duration"], d2["price"])
-        if dv1 <= 0 or dv2 <= 0: 
-            print(f"Skip {pk}: DV01 error (dur={d1['duration']:.2f}/{d2['duration']:.2f}, price={d1['price']:.2f}/{d2['price']:.2f})"); 
-            continue
+        if dv1 <= 0 or dv2 <= 0: print(f"Skip {pk}: DV01 error"); continue
             
         spread = d1["yield"] - d2["yield"]
         abs_spread = abs(spread)
@@ -162,7 +118,7 @@ def main():
                        f"Short {short_id[2:7]}: {q_short} pcs\n\n"
                        f"Yield: {d1['yield']:.2f}% vs {d2['yield']:.2f}%")
                 
-                send_ntfy("ENTRY ALERT", msg, pr=4)
+                send_vk(msg)
                 hist[f"last_open_{pk}"] = now.isoformat()
                 print(f"OK {clean}: Entry sent")
                 continue
@@ -175,7 +131,7 @@ def main():
                        f"Action: Close positions\n\n"
                        f"Yield: {d1['yield']:.2f}% vs {d2['yield']:.2f}%")
                 
-                send_ntfy("FIX ALERT", msg, pr=3)
+                send_vk(msg)
                 hist[f"last_fix_{pk}"] = now.isoformat()
                 print(f"OK {clean}: Fix sent")
                 continue
