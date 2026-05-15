@@ -1,14 +1,14 @@
 import os, json, requests, pandas as pd
 from datetime import datetime, timedelta
 
-# 🔐 ЗАГРУЗКА СЕКРЕТОВ ИЗ GITHUB
+# 🔐 ЗАГРУЗКА СЕКРЕТОВ
 VK_TOKEN = os.environ.get('VK_GROUP_TOKEN')
 VK_GROUP_ID = os.environ.get('VK_GROUP_ID')
 VK_USER_ID = os.environ.get('VK_USER_ID')
 
 CONFIG = {
     "TARGET_DV01": 100000,
-    "SPREAD_THRESHOLD": 0.0,
+    "SPREAD_THRESHOLD": 0.5,
     "FIX_THRESHOLD": 0.15,
     "COOLDOWN_MIN": 20,
     "PAIRS": [
@@ -72,28 +72,66 @@ def send_vk(message):
         print(f"VK Exception: {e}")
 
 def is_market_open():
+    """Проверка: 07:00 - 23:59 МСК, пн-пт"""
     now_msk = datetime.utcnow() + timedelta(hours=3)
     hour = now_msk.hour
     weekday = now_msk.weekday()
-    if weekday >= 5: return False
-    if 10 <= hour < 19: return True
+    if weekday >= 5: return False  # Выходные
+    if 7 <= hour < 24: return True  # 07:00 - 23:59
     return False
 
+def send_daily_report():
+    """Отправка ежедневного отчёта в 18:00"""
+    print("Sending daily report at 18:00...")
+    lines = [f"📊 ЕЖЕДНЕВНЫЙ ОТЧЁТ | {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"]
+    
+    for id1, id2 in CONFIG["PAIRS"]:
+        d1, d2 = get_bond(id1), get_bond(id2)
+        if not d1 or not d2:
+            lines.append(f"❌ {id1[2:7]}-{id2[2:7]}: нет данных")
+            continue
+        
+        spread = d1["yield"] - d2["yield"]
+        abs_spread = abs(spread)
+        
+        # Определяем статус
+        if abs_spread > CONFIG["SPREAD_THRESHOLD"]:
+            status = "🟢 ENTRY"
+        elif abs_spread <= CONFIG["FIX_THRESHOLD"]:
+            status = "🔴 FIX"
+        else:
+            status = "⚪ WAIT"
+        
+        lines.append(f"{status} | {id1[2:7]}-{id2[2:7]}: {spread*100:+.1f} bp ({d1['yield']:.2f}% vs {d2['yield']:.2f}%)")
+    
+    summary = "\n".join(lines)
+    summary += f"\n\nПороги: Вход >{CONFIG['SPREAD_THRESHOLD']*100:.0f} bp, Фиксация <={CONFIG['FIX_THRESHOLD']*100:.0f} bp"
+    
+    send_vk(summary)
+
 def main():
-    # Проверяем, загрузились ли секреты
+    print(f"Check time: {datetime.now().strftime('%H:%M')}")
+    
+    # Проверка секретов
     if not VK_TOKEN or not VK_USER_ID:
-        print("ERROR: Secrets not found! Check GitHub Settings -> Secrets.")
+        print("ERROR: Secrets not found!")
         return
 
-    print(f"Check time: {datetime.now().strftime('%H:%M')}")
     hist = load_hist()
     now = datetime.now()
+    now_msk = datetime.utcnow() + timedelta(hours=3)
 
+    # Проверка рынка
     if not is_market_open():
         print("Market closed. Skipping.")
         save_hist(hist)
         return
 
+    # ЕЖЕДНЕВНЫЙ ОТЧЁТ В 18:00
+    if now_msk.hour == 18 and now_msk.minute < 5:  # В 18:00-18:04
+        send_daily_report()
+
+    # Проверка спредов
     for id1, id2 in CONFIG["PAIRS"]:
         pk = f"{id1}_{id2}"
         d1, d2 = get_bond(id1), get_bond(id2)
