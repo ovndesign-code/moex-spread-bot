@@ -19,7 +19,7 @@ CONFIG = {
         ("SU26250RMFS9", "SU26252RMFS5"),
         ("SU26238RMFS4", "SU26247RMFS5")
     ],
-    "HISTORY_FILE": os.path.join(os.path.expanduser("~"), "bond_history.json")
+    "HISTORY_FILE": "bond_history.json"  # 🧠 ПАМЯТЬ В РЕПОЗИТОРИИ
 }
 
 # 📱 ДОСТУПНЫЕ КОМАНДЫ
@@ -106,17 +106,14 @@ def check_incoming_commands():
         if "error" in result or "items" not in result.get("response", {}):
             return None
         
-        # Ищем новые команды (out=0 — входящие от пользователя)
         for msg in result["response"]["items"]:
             msg_id = msg.get("id", 0)
             if msg_id <= last_msg_id:
                 continue
-            if msg.get("out") == 0:  # Входящее
+            if msg.get("out") == 0:
                 text = msg.get("text", "").strip().lower()
-                # Проверяем на команды
                 for cmd, aliases in COMMANDS.items():
                     if text == cmd.lower() or text in [a.lower() for a in aliases]:
-                        # Сохраняем ID последнего обработанного
                         hist["last_processed_msg_id"] = msg_id
                         save_hist(hist)
                         print(f"Command detected: {cmd}")
@@ -128,7 +125,8 @@ def check_incoming_commands():
 
 def send_status_report():
     """Отправляет текущую сводку по всем парам"""
-    lines = [f"📊 СТАТУС | {datetime.now().strftime('%d.%m %H:%M')}\n"]
+    now_msk = datetime.utcnow() + timedelta(hours=3)
+    lines = [f"📊 СТАТУС | {now_msk.strftime('%d.%m %H:%M МСК')}\n"]
     
     for id1, id2 in CONFIG["PAIRS"]:
         d1, d2 = get_bond(id1), get_bond(id2)
@@ -168,7 +166,8 @@ def send_help():
 def send_daily_report():
     """Отправка ежедневного отчёта в 18:00"""
     print("Sending daily report at 18:00...")
-    lines = [f"📊 ЕЖЕДНЕВНЫЙ ОТЧЁТ | {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"]
+    now_msk = datetime.utcnow() + timedelta(hours=3)
+    lines = [f"📊 ЕЖЕДНЕВНЫЙ ОТЧЁТ | {now_msk.strftime('%d.%m.%Y %H:%M МСК')}\n"]
     
     for id1, id2 in CONFIG["PAIRS"]:
         d1, d2 = get_bond(id1), get_bond(id2)
