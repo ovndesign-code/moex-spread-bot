@@ -22,6 +22,13 @@ CONFIG = {
     "HISTORY_FILE": os.path.join(os.path.expanduser("~"), "bond_history.json")
 }
 
+# 📱 ДОСТУПНЫЕ КОМАНДЫ
+COMMANDS = {
+    "/статус": ["статус", "status"],
+    "/отчёт": ["отчёт", "report", "отчет"],
+    "/помощь": ["помощь", "help", "помогите"]
+}
+
 def get_bond(secid):
     url = f"https://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQOB/securities/{secid}.json"
     p = {"iss.only": "marketdata", "marketdata.columns": "YIELD,DURATION,WAPRICE,LAST"}
@@ -76,9 +83,87 @@ def is_market_open():
     now_msk = datetime.utcnow() + timedelta(hours=3)
     hour = now_msk.hour
     weekday = now_msk.weekday()
-    if weekday >= 5: return False  # Выходные
-    if 7 <= hour < 24: return True  # 07:00 - 23:59
+    if weekday >= 5: return False
+    if 7 <= hour < 24: return True
     return False
+
+def check_incoming_commands():
+    """Проверяет последние сообщения на наличие команд"""
+    try:
+        hist = load_hist()
+        last_msg_id = hist.get("last_processed_msg_id", 0)
+        
+        url = "https://api.vk.com/method/messages.getHistory"
+        params = {
+            "peer_id": VK_USER_ID,
+            "count": 20,
+            "access_token": VK_TOKEN,
+            "v": "5.131"
+        }
+        r = requests.post(url, params=params, timeout=10)
+        result = r.json()
+        
+        if "error" in result or "items" not in result.get("response", {}):
+            return None
+        
+        # Ищем новые команды (out=0 — входящие от пользователя)
+        for msg in result["response"]["items"]:
+            msg_id = msg.get("id", 0)
+            if msg_id <= last_msg_id:
+                continue
+            if msg.get("out") == 0:  # Входящее
+                text = msg.get("text", "").strip().lower()
+                # Проверяем на команды
+                for cmd, aliases in COMMANDS.items():
+                    if text == cmd.lower() or text in [a.lower() for a in aliases]:
+                        # Сохраняем ID последнего обработанного
+                        hist["last_processed_msg_id"] = msg_id
+                        save_hist(hist)
+                        print(f"Command detected: {cmd}")
+                        return cmd
+        return None
+    except Exception as e:
+        print(f"Command check error: {e}")
+        return None
+
+def send_status_report():
+    """Отправляет текущую сводку по всем парам"""
+    lines = [f"📊 СТАТУС | {datetime.now().strftime('%d.%m %H:%M')}\n"]
+    
+    for id1, id2 in CONFIG["PAIRS"]:
+        d1, d2 = get_bond(id1), get_bond(id2)
+        if not d1 or not d2:
+            lines.append(f"❌ {id1[2:7]}-{id2[2:7]}: нет данных")
+            continue
+        
+        spread = d1["yield"] - d2["yield"]
+        abs_spread = abs(spread)
+        
+        if abs_spread > CONFIG["SPREAD_THRESHOLD"]:
+            status = "🟢 ENTRY"
+        elif abs_spread <= CONFIG["FIX_THRESHOLD"]:
+            status = "🔴 FIX"
+        else:
+            status = "⚪ WAIT"
+        
+        lines.append(f"{status} | {id1[2:7]}-{id2[2:7]}: {spread*100:+.1f} bp ({d1['yield']:.2f}% vs {d2['yield']:.2f}%)")
+    
+    summary = "\n".join(lines)
+    summary += f"\n\nПороги: Вход >{CONFIG['SPREAD_THRESHOLD']*100:.0f} bp, Фиксация <={CONFIG['FIX_THRESHOLD']*100:.0f} bp"
+    
+    send_vk(summary)
+
+def send_help():
+    """Отправляет справку по командам"""
+    help_text = (
+        "📚 ДОСТУПНЫЕ КОМАНДЫ:\n\n"
+        "/статус или /report — текущая сводка по всем парам\n"
+        "/отчёт — полный отчёт (как в 18:00)\n"
+        "/помощь — эта справка\n\n"
+        "Бот работает: Пн-Пт 07:00-23:59 МСК\n"
+        "Проверка каждые 20 минут"
+    )
+    send_vk(help_text)
 
 def send_daily_report():
     """Отправка ежедневного отчёта в 18:00"""
@@ -94,7 +179,6 @@ def send_daily_report():
         spread = d1["yield"] - d2["yield"]
         abs_spread = abs(spread)
         
-        # Определяем статус
         if abs_spread > CONFIG["SPREAD_THRESHOLD"]:
             status = "🟢 ENTRY"
         elif abs_spread <= CONFIG["FIX_THRESHOLD"]:
@@ -112,7 +196,6 @@ def send_daily_report():
 def main():
     print(f"Check time: {datetime.now().strftime('%H:%M')}")
     
-    # Проверка секретов
     if not VK_TOKEN or not VK_USER_ID:
         print("ERROR: Secrets not found!")
         return
@@ -121,17 +204,24 @@ def main():
     now = datetime.now()
     now_msk = datetime.utcnow() + timedelta(hours=3)
 
-    # Проверка рынка
     if not is_market_open():
         print("Market closed. Skipping.")
         save_hist(hist)
         return
 
-    # ЕЖЕДНЕВНЫЙ ОТЧЁТ В 18:00
-    if now_msk.hour == 18 and now_msk.minute < 5:  # В 18:00-18:04
+    # 🔍 ПРОВЕРКА КОМАНД
+    cmd = check_incoming_commands()
+    if cmd:
+        if cmd in ["/статус", "/отчёт", "/report"]:
+            send_status_report()
+        elif cmd == "/помощь":
+            send_help()
+
+    # 📊 ЕЖЕДНЕВНЫЙ ОТЧЁТ В 18:00
+    if now_msk.hour == 18 and now_msk.minute < 5:
         send_daily_report()
 
-    # Проверка спредов
+    # 📈 ПРОВЕРКА СПРЕДОВ
     for id1, id2 in CONFIG["PAIRS"]:
         pk = f"{id1}_{id2}"
         d1, d2 = get_bond(id1), get_bond(id2)
