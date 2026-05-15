@@ -11,6 +11,8 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,3 +30,12 @@ jobs:
           VK_GROUP_TOKEN: ${{ secrets.VK_GROUP_TOKEN }}
           VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
           VK_USER_ID: ${{ secrets.VK_USER_ID }}
+      
+      # 🧠 СОХРАНЕНИЕ ПАМЯТИ (чтобы бот не забывал)
+      - name: Save History
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add bond_history.json
+          git diff --staged --quiet || git commit -m "Update bot history"
+          git push
